@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="theme-color" content="#1a1a2e">
+    <meta name="description" content="Detector de billetes mexicanos para personas con discapacidad visual">
+    
+    <title>💵 Detector de Billetes MX</title>
+    
+    <!-- TensorFlow.js -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            min-height: 100vh;
+            min-height: -webkit-fill-available;
+            color: white;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        /* ============================================
+           HEADER
+           ============================================ */
+        .header {
+            padding: 15px 20px;
+            padding-top: max(15px, env(safe-area-inset-top));
+            text-align: center;
+            background: rgba(0,0,0,0.3);
+        }
+        
+        .header h1 {
+            font-size: 20px;
+            font-weight: 600;
+        }
+        
+        .header .subtitle {
+            font-size: 12px;
+            opacity: 0.7;
+            margin-top: 3px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+        
+        .status-badge.loading {
+            background: #f59e0b;
+            color: #1a1a2e;
+        }
+        
+        .status-badge.ready {
+            background: #22c55e;
+            color: #1a1a2e;
+        }
+        
+        .status-badge.error {
+            background: #ef4444;
+            color: white;
+        }
+        
+        /* ============================================
+           CAMERA VIEW
+           ============================================ */
+        .camera-container {
+            flex: 1;
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 15px;
+        }
+        
+        .camera-box {
+            position: relative;
+            width: 100%;
+            max-width: 500px;
+            aspect-ratio: 4/3;
+            background: #000;
+            border-radius: 20px;
+            overflow: hidden;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        
+        #video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .camera-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+        }
+        
+        .scan-frame {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 85%;
+            height: 60%;
+            border: 3px solid rgba(255,255,255,0.5);
+            border-radius: 12px;
+        }
+        
+        .scan-frame.detecting {
+            border-color: #f59e0b;
+            animation: pulse 1s infinite;
+        }
+        
+        .scan-frame.success {
+            border-color: #22c55e;
+            border-width: 4px;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+        
+        .scan-line {
+            position: absolute;
+            top: 0;
+            left: 5%;
+            width: 90%;
+            height: 3px;
+            background: linear-gradient(90deg, transparent, #4ade80, transparent);
+            border-radius: 2px;
+            animation: scan 2s linear infinite;
+        }
+        
+        @keyframes scan {
+            0% { top: 10%; }
+            50% { top: 85%; }
+            100% { top: 10%; }
+        }
+        
+        .corner {
+            position: absolute;
+            width: 25px;
+            height: 25px;
+            border: 4px solid #4ade80;
+        }
+        
+        .corner.tl { top: -2px; left: -2px; border-right: none; border-bottom: none; border-radius: 10px 0 0 0; }
+        .corner.tr { top: -2px; right: -2px; border-left: none; border-bottom: none; border-radius: 0 10px 0 0; }
+        .corner.bl { bottom: -2px; left: -2px; border-right: none; border-top: none; border-radius: 0 0 0 10px; }
+        .corner.br { bottom: -2px; right: -2px; border-left: none; border-top: none; border-radius: 0 0 10px 0; }
+        
+        /* ============================================
+           RESULT DISPLAY
+           ============================================ */
+        .result-container {
+            padding: 20px;
+            padding-bottom: max(20px, env(safe-area-inset-bottom));
+            background: rgba(0,0,0,0.4);
+        }
+        
+        .result-box {
+            background: rgba(255,255,255,0.1);
+            border-radius: 16px;
+            padding: 20px;
+            text-align: center;
+            min-height: 120px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .result-box.success {
+            background: linear-gradient(135deg, rgba(34, 197, 94, 0.3), rgba(22, 163, 74, 0.3));
+            border: 2px solid #22c55e;
+        }
+        
+        .result-box.warning {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.3), rgba(217, 119, 6, 0.3));
+            border: 2px solid #f59e0b;
+        }
+        
+        .result-box.waiting {
+            border: 2px dashed rgba(255,255,255,0.3);
+        }
+        
+        .result-denomination {
+            font-size: 48px;
+            font-weight: bold;
+            color: #4ade80;
+            line-height: 1;
+        }
+        
+        .result-label {
+            font-size: 16px;
+            opacity: 0.8;
+            margin-top: 5px;
+        }
+        
+        .result-confidence {
+            font-size: 13px;
+            opacity: 0.6;
+            margin-top: 8px;
+        }
+        
+        .result-message {
+            font-size: 15px;
+            opacity: 0.8;
+        }
+        
+        .result-icon {
+            font-size: 36px;
+            margin-bottom: 10px;
+        }
+        
+        /* ============================================
+           CONTROLS
+           ============================================ */
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .btn {
+            flex: 1;
+            padding: 14px 20px;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: transform 0.1s, opacity 0.2s;
+        }
+        
+        .btn:active {
+            transform: scale(0.98);
+        }
+        
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #4ade80, #22c55e);
+            color: #1a1a2e;
+        }
+        
+        .btn-secondary {
+            background: rgba(255,255,255,0.15);
+            color: white;
+        }
+        
+        .btn-speak {
+            background: linear-gradient(135deg, #3b82f6, #2563eb);
+            color: white;
+        }
+        
+        /* ============================================
+           LOADING SCREEN
+           ============================================ */
+        .loading-screen {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.5s;
+        }
+        
+        .loading-screen.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .loading-icon {
+            font-size: 64px;
+            margin-bottom: 20px;
+            animation: bounce 1s infinite;
+        }
+        
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .loading-text {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        
+        .loading-progress {
+            width: 200px;
+            height: 6px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 3px;
+            overflow: hidden;
+        }
+        
+        .loading-progress-bar {
+            height: 100%;
+            background: #4ade80;
+            border-radius: 3px;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        
+        /* ============================================
+           TOAST NOTIFICATIONS
+           ============================================ */
+        .toast {
+            position: fixed;
+            top: 80px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            background: rgba(0,0,0,0.9);
+            color: white;
+            padding: 12px 24px;
+            border-radius: 25px;
+            font-size: 14px;
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 1001;
+        }
+        
+        .toast.show {
+            transform: translateX(-50%) translateY(0);
+            opacity: 1;
+        }
+        
+        /* ============================================
+           ACCESSIBILITY
+           ============================================ */
+        .sr-only {
+            position: absolute;
+            width: 1px;
+            height: 1px;
+            padding: 0;
+            margin: -1px;
+            overflow: hidden;
+            clip: rect(0, 0, 0, 0);
+            border: 0;
+        }
+        
+        /* High contrast mode */
+        @media (prefers-contrast: high) {
+            .result-box {
+                border-width: 3px;
+            }
+            .scan-frame {
+                border-width: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div class="loading-screen" id="loading-screen">
+        <div class="loading-icon">💵</div>
+        <div class="loading-text" id="loading-text">Cargando modelo...</div>
+        <div class="loading-progress">
+            <div class="loading-progress-bar" id="loading-progress"></div>
+        </div>
+    </div>
+    
+    <!-- Header -->
+    <header class="header">
+        <h1>💵 Detector de Billetes</h1>
+        <p class="subtitle">Para personas con discapacidad visual</p>
+        <div class="status-badge loading" id="status-badge">Cargando...</div>
+    </header>
+    
+    <!-- Camera View -->
+    <main class="camera-container">
+        <div class="camera-box">
+            <video id="video" autoplay playsinline muted></video>
+            <div class="camera-overlay">
+                <div class="scan-frame" id="scan-frame">
+                    <div class="corner tl"></div>
+                    <div class="corner tr"></div>
+                    <div class="corner bl"></div>
+                    <div class="corner br"></div>
+                    <div class="scan-line"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <!-- Result Display -->
+    <section class="result-container">
+        <div class="result-box waiting" id="result-box" role="status" aria-live="polite">
+            <div class="result-icon">📷</div>
+            <div class="result-message">Apunta la cámara hacia un billete</div>
+        </div>
+        
+        <div class="controls">
+            <button class="btn btn-secondary" id="btn-pause" disabled>
+                <span>⏸️</span> Pausar
+            </button>
+            <button class="btn btn-speak" id="btn-speak" disabled>
+                <span>🔊</span> Repetir
+            </button>
+        </div>
+    </section>
+    
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+    
+    <!-- Hidden canvas for processing -->
+    <canvas id="canvas" style="display: none;"></canvas>
+    
+    <script>
+    // ========================================================================
+    // CONFIGURACIÓN
+    // ========================================================================
+    const CONFIG = {
+        modelUrl: './tfjs_model/model.json',  // Ruta al modelo
+        inputSize: 224,
+        clases: ['20', '50', '100', '200', '500', '1000'],
+        
+        // Umbrales de confianza (CRÍTICO para seguridad)
+        umbrales: {
+            minimo: 0.80,        // 80% mínimo para aceptar
+            diferencia: 0.25,    // 25% diferencia con 2da clase
+            alta: 0.92           // 92% para "muy seguro"
+        },
+        
+        // Configuración de detección
+        deteccionIntervaloMs: 800,  // Detectar cada 800ms
+        cooldownExitoMs: 3000,      // Esperar 3s después de éxito
+    };
+    
+    // ========================================================================
+    // ESTADO GLOBAL
+    // ========================================================================
+    let modelo = null;
+    let video = null;
+    let canvas = null;
+    let ctx = null;
+    let detectando = true;
+    let ultimoResultado = null;
+    let ultimaDeteccionExitosa = 0;
+    let intervaloDeteccion = null;
+    
+    // ========================================================================
+    // ELEMENTOS DOM
+    // ========================================================================
+    const elements = {
+        loadingScreen: document.getElementById('loading-screen'),
+        loadingText: document.getElementById('loading-text'),
+        loadingProgress: document.getElementById('loading-progress'),
+        statusBadge: document.getElementById('status-badge'),
+        video: document.getElementById('video'),
+        canvas: document.getElementById('canvas'),
+        scanFrame: document.getElementById('scan-frame'),
+        resultBox: document.getElementById('result-box'),
+        btnPause: document.getElementById('btn-pause'),
+        btnSpeak: document.getElementById('btn-speak'),
+        toast: document.getElementById('toast')
+    };
+    
+    // ========================================================================
+    // UTILIDADES
+    // ========================================================================
+    function showToast(message) {
+        elements.toast.textContent = message;
+        elements.toast.classList.add('show');
+        setTimeout(() => elements.toast.classList.remove('show'), 3000);
+    }
+    
+    function setStatus(status, text) {
+        elements.statusBadge.className = 'status-badge ' + status;
+        elements.statusBadge.textContent = text;
+    }
+    
+    function hablar(texto, prioridad = false) {
+        if ('speechSynthesis' in window) {
+            if (prioridad) {
+                window.speechSynthesis.cancel();
+            }
+            
+            const utterance = new SpeechSynthesisUtterance(texto);
+            utterance.lang = 'es-MX';
+            utterance.rate = 1.0;
+            utterance.pitch = 1.0;
+            utterance.volume = 1.0;
+            
+            window.speechSynthesis.speak(utterance);
+        }
+    }
+    
+    function vibrar(patron) {
+        if ('vibrate' in navigator) {
+            navigator.vibrate(patron);
+        }
+    }
+    
+    // ========================================================================
+    // CARGA DEL MODELO
+    // ========================================================================
+    async function cargarModelo() {
+        try {
+            elements.loadingText.textContent = 'Cargando modelo de IA...';
+            elements.loadingProgress.style.width = '30%';
+            
+            modelo = await tf.loadLayersModel(CONFIG.modelUrl);
+            
+            elements.loadingProgress.style.width = '70%';
+            elements.loadingText.textContent = 'Preparando modelo...';
+            
+            // Warmup - primera inferencia es lenta
+            const warmup = tf.zeros([1, CONFIG.inputSize, CONFIG.inputSize, 3]);
+            await modelo.predict(warmup).data();
+            warmup.dispose();
+            
+            elements.loadingProgress.style.width = '100%';
+            elements.loadingText.textContent = '¡Listo!';
+            
+            console.log('✅ Modelo cargado correctamente');
+            return true;
+            
+        } catch (error) {
+            console.error('❌ Error cargando modelo:', error);
+            elements.loadingText.textContent = 'Error al cargar modelo';
+            setStatus('error', 'Error de modelo');
+            hablar('Error al cargar el modelo. Verifica tu conexión.');
+            return false;
+        }
+    }
+    
+    // ========================================================================
+    // CÁMARA
+    // ========================================================================
+    async function iniciarCamara() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                    facingMode: { ideal: 'environment' },
+                    width: { ideal: 1280 },
+                    height: { ideal: 720 }
+                },
+                audio: false
+            });
+            
+            elements.video.srcObject = stream;
+            await elements.video.play();
+            
+            // Configurar canvas
+            elements.canvas.width = CONFIG.inputSize;
+            elements.canvas.height = CONFIG.inputSize;
+            ctx = elements.canvas.getContext('2d');
+            
+            console.log('✅ Cámara iniciada');
+            return true;
+            
+        } catch (error) {
+            console.error('❌ Error de cámara:', error);
+            setStatus('error', 'Sin cámara');
+            
+            let mensaje = 'No se pudo acceder a la cámara.';
+            if (error.name === 'NotAllowedError') {
+                mensaje = 'Permiso de cámara denegado. Por favor permite el acceso en la configuración.';
+            }
+            
+            hablar(mensaje);
+            showToast(mensaje);
+            return false;
+        }
+    }
+    
+    // ========================================================================
+    // PREPROCESAMIENTO
+    // ========================================================================
+    function preprocesarFrame() {
+        // Dibujar frame del video en canvas (redimensionado a 224x224)
+        const videoAspect = elements.video.videoWidth / elements.video.videoHeight;
+        const canvasAspect = CONFIG.inputSize / CONFIG.inputSize;
+        
+        let sx, sy, sw, sh;
+        
+        if (videoAspect > canvasAspect) {
+            sh = elements.video.videoHeight;
+            sw = sh * canvasAspect;
+            sx = (elements.video.videoWidth - sw) / 2;
+            sy = 0;
+        } else {
+            sw = elements.video.videoWidth;
+            sh = sw / canvasAspect;
+            sx = 0;
+            sy = (elements.video.videoHeight - sh) / 2;
+        }
+        
+        ctx.drawImage(
+            elements.video,
+            sx, sy, sw, sh,
+            0, 0, CONFIG.inputSize, CONFIG.inputSize
+        );
+        
+        // Obtener datos de imagen como tensor
+        return tf.tidy(() => {
+            const tensor = tf.browser.fromPixels(elements.canvas);
+            return tensor.expandDims(0).toFloat();
+        });
+    }
+    
+    // ========================================================================
+    // VALIDACIÓN DE PREDICCIÓN
+    // ========================================================================
+    function validarPrediccion(probabilidades) {
+        const probs = Array.from(probabilidades);
+        const indices = probs
+            .map((prob, idx) => ({ prob, idx, clase: CONFIG.clases[idx] }))
+            .sort((a, b) => b.prob - a.prob);
+        
+        const mejor = indices[0];
+        const segunda = indices[1];
+        const diferencia = mejor.prob - segunda.prob;
+        
+        // Regla 1: Confianza mínima
+        if (mejor.prob < CONFIG.umbrales.minimo) {
+            return {
+                esConfiable: false,
+                nivel: 'rechazada',
+                razon: 'Confianza insuficiente',
+                mejor,
+                segunda,
+                diferencia
+            };
+        }
+        
+        // Regla 2: Diferencia con segunda opción
+        if (diferencia < CONFIG.umbrales.diferencia) {
+            return {
+                esConfiable: false,
+                nivel: 'ambigua',
+                razon: 'Muy similar a otra denominación',
+                mejor,
+                segunda,
+                diferencia
+            };
+        }
+        
+        // Determinar nivel de confianza
+        const nivel = mejor.prob >= CONFIG.umbrales.alta ? 'alta' : 'media';
+        
+        return {
+            esConfiable: true,
+            nivel,
+            razon: nivel === 'alta' ? 'Detección segura' : 'Detección aceptable',
+            mejor,
+            segunda,
+            diferencia
+        };
+    }
+    
+    // ========================================================================
+    // DETECCIÓN
+    // ========================================================================
+    async function detectar() {
+        if (!modelo || !detectando) return;
+        
+        // Cooldown después de detección exitosa
+        const ahora = Date.now();
+        if (ahora - ultimaDeteccionExitosa < CONFIG.cooldownExitoMs) {
+            return;
+        }
+        
+        try {
+            // Preprocesar frame
+            const inputTensor = preprocesarFrame();
+            
+            // Ejecutar inferencia
+            const predicciones = await modelo.predict(inputTensor).data();
+            inputTensor.dispose();
+            
+            // Validar resultado
+            const resultado = validarPrediccion(predicciones);
+            
+            // Actualizar UI
+            actualizarResultado(resultado);
+            
+            // Si es confiable, anunciar
+            if (resultado.esConfiable) {
+                ultimaDeteccionExitosa = ahora;
+                anunciarResultado(resultado);
+            }
+            
+        } catch (error) {
+            console.error('Error en detección:', error);
+        }
+    }
+    
+    // ========================================================================
+    // ACTUALIZAR UI
+    // ========================================================================
+    function actualizarResultado(resultado) {
+        ultimoResultado = resultado;
+        
+        if (resultado.esConfiable) {
+            // Éxito
+            elements.resultBox.className = 'result-box success';
+            elements.scanFrame.className = 'scan-frame success';
+            
+            elements.resultBox.innerHTML = `
+                <div class="result-denomination">$${resultado.mejor.clase}</div>
+                <div class="result-label">pesos mexicanos</div>
+                <div class="result-confidence">
+                    Confianza: ${(resultado.mejor.prob * 100).toFixed(0)}%
+                    ${resultado.nivel === 'alta' ? '✓✓' : '✓'}
+                </div>
+            `;
+            
+        } else {
+            // No detectado
+            elements.resultBox.className = 'result-box warning';
+            elements.scanFrame.className = 'scan-frame detecting';
+            
+            elements.resultBox.innerHTML = `
+                <div class="result-icon">🔍</div>
+                <div class="result-message">Buscando billete...</div>
+                <div class="result-confidence" style="font-size: 12px; margin-top: 10px;">
+                    Mejor candidato: $${resultado.mejor.clase} (${(resultado.mejor.prob * 100).toFixed(0)}%)
+                </div>
+            `;
+        }
+        
+        elements.btnSpeak.disabled = !resultado.esConfiable;
+    }
+    
+    function anunciarResultado(resultado) {
+        const monto = resultado.mejor.clase;
+        const confianza = resultado.nivel === 'alta' ? 'con certeza' : 'probablemente';
+        
+        const mensaje = `Billete de ${monto} pesos`;
+        
+        hablar(mensaje, true);
+        
+        // Vibración de éxito
+        if (resultado.nivel === 'alta') {
+            vibrar([100, 50, 100]); // Doble vibración = muy seguro
+        } else {
+            vibrar(150); // Simple = aceptable
+        }
+    }
+    
+    // ========================================================================
+    // CONTROLES
+    // ========================================================================
+    function togglePausa() {
+        detectando = !detectando;
+        
+        if (detectando) {
+            elements.btnPause.innerHTML = '<span>⏸️</span> Pausar';
+            elements.scanFrame.classList.remove('paused');
+            hablar('Detección activada');
+        } else {
+            elements.btnPause.innerHTML = '<span>▶️</span> Reanudar';
+            elements.scanFrame.classList.add('paused');
+            hablar('Detección pausada');
+        }
+    }
+    
+    function repetirResultado() {
+        if (ultimoResultado && ultimoResultado.esConfiable) {
+            anunciarResultado(ultimoResultado);
+        } else {
+            hablar('No hay resultado que repetir');
+        }
+    }
+    
+    // ========================================================================
+    // INICIALIZACIÓN
+    // ========================================================================
+    async function inicializar() {
+        console.log('🚀 Iniciando aplicación...');
+        
+        // Verificar soporte
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            alert('Tu navegador no soporta acceso a la cámara. Usa Safari o Chrome.');
+            return;
+        }
+        
+        // Cargar modelo
+        const modeloCargado = await cargarModelo();
+        if (!modeloCargado) return;
+        
+        // Iniciar cámara
+        const camaraIniciada = await iniciarCamara();
+        if (!camaraIniciada) return;
+        
+        // Ocultar pantalla de carga
+        elements.loadingScreen.classList.add('hidden');
+        
+        // Actualizar estado
+        setStatus('ready', '✓ Listo');
+        
+        // Habilitar controles
+        elements.btnPause.disabled = false;
+        
+        // Anunciar
+        hablar('Sistema listo. Apunta la cámara hacia un billete.');
+        
+        // Iniciar detección periódica
+        intervaloDeteccion = setInterval(detectar, CONFIG.deteccionIntervaloMs);
+        
+        console.log('✅ Aplicación iniciada');
+    }
+    
+    // ========================================================================
+    // EVENT LISTENERS
+    // ========================================================================
+    elements.btnPause.addEventListener('click', togglePausa);
+    elements.btnSpeak.addEventListener('click', repetirResultado);
+    
+    // Doble tap para repetir (accesibilidad)
+    let lastTap = 0;
+    document.addEventListener('touchend', (e) => {
+        const now = Date.now();
+        if (now - lastTap < 300) {
+            e.preventDefault();
+            repetirResultado();
+        }
+        lastTap = now;
+    });
+    
+    // Visibilidad de la página
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            detectando = false;
+        } else {
+            detectando = true;
+        }
+    });
+    
+    // Iniciar cuando cargue la página
+    window.addEventListener('load', inicializar);
+    </script>
+</body>
+</html>
